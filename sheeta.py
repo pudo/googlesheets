@@ -60,24 +60,39 @@ class Connection(object):
         return conn
 
 
+class Sheet(object):
+    """ A sheet is a particular table of data within the context
+    of a ``Spreadsheet``. """
+
+    def __init__(self, spreadsheet, id):
+        pass
+
+
 class Spreadsheet(object):
     """ A simple wrapper for google docs spreadsheets. Spreadsheets
     only have a ``title`` and an ``id``, all actual data is stored
     in a set of associated ``sheets``. """
 
-    def __init__(self, id, conn):
+    def __init__(self, id, conn, resource=None):
         self.id = id
         self.conn = conn
+        self._res = resource
 
     @property
-    def meta(self):
+    def _worksheet_feed(self):
         if not hasattr(self, '_wsf') or self._wsf is None:
             self._wsf = self.conn.sheets_service.GetWorksheetsFeed(self.id)
         return self._wsf
 
     @property
+    def resource(self):
+        if not hasattr(self, '_res') or self._res is None:
+            self._res = self.conn.docs_client.GetResourceById(self.id)
+        return self._res
+
+    @property
     def title(self):
-        return self.meta.title.text
+        return self._worksheet_feed.title.text
 
     def __repr__(self):
         return '<Spreadsheet(%r, %r)>' % (self.id, self.title)
@@ -100,13 +115,13 @@ class Spreadsheet(object):
     @classmethod
     def create(cls, title, conn=None, google_user=None,
                google_password=None):
-        """ Create a new spreadsheet with the given name. """
+        """ Create a new spreadsheet with the given ``title``. """
         conn = Connection.connect(conn=conn, google_user=google_user,
                                   google_password=google_password)
-        doc = Resource(type='spreadsheet', title=title)
-        doc = conn.docs_client.CreateResource(doc)
-        id = doc.id.text.rsplit('%3A', 1)[-1]
-        return cls.by_id(id, conn=conn)
+        res = Resource(type='spreadsheet', title=title)
+        res = conn.docs_client.CreateResource(res)
+        id = res.id.text.rsplit('%3A', 1)[-1]
+        return cls(id, conn, resource=res)
 
     @classmethod
     def by_id(cls, id, conn=None, google_user=None,
@@ -121,6 +136,8 @@ class Spreadsheet(object):
     @classmethod
     def by_title(cls, title, conn=None, google_user=None,
                  google_password=None):
+        """ Open the first document with the given ``title`` that is
+        returned by document search. """
         conn = Connection.connect(conn=conn, google_user=google_user,
                                   google_password=google_password)
         q = DocumentQuery(categories=['spreadsheet'],
