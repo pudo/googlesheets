@@ -1,7 +1,6 @@
 import os
 from gdata.docs.data import Resource
-from gdata.docs.service import DocsService, DocumentQuery
-from gdata.docs.client import DocsClient
+from gdata.docs.client import DocsClient, DocsQuery
 from gdata.spreadsheet.service import SpreadsheetsService
 
 SOURCE_NAME = 'Sheeta/Python'
@@ -22,14 +21,6 @@ class Connection(object):
     @property
     def google_password(self):
         return self._google_password or os.environ.get('GOOGLE_PASSWORD')
-
-    @property
-    def docs_service(self):
-        if not hasattr(self, '_docs_service'):
-            service = DocsService(source=SOURCE_NAME)
-            service.ClientLogin(self.google_user, self.google_password)
-            self._docs_service = service
-        return self._docs_service
 
     @property
     def docs_client(self):
@@ -64,8 +55,39 @@ class Sheet(object):
     """ A sheet is a particular table of data within the context
     of a ``Spreadsheet``. """
 
-    def __init__(self, spreadsheet, id):
-        pass
+    def __init__(self, spreadsheet, ws):
+        self._ss = spreadsheet
+        self._ws = ws
+        self.id = ws.id.text.rsplit('/', 1)[-1]
+
+    @property
+    def title(self):
+        return self._ws.title.text
+
+    def delete(self):
+        self._ss.conn.sheets_service.DeleteWorksheet(self._ws)
+
+    def find(self, **kwargs):
+        feed = self._ss.conn.sheets_service.GetListFeed(self._ss.id,
+                                                        wksht_id=self.id)
+        for entry in feed.entry:
+            row = {}
+            for k, v in entry.custom.items():
+                row[k] = v.text
+            yield row
+
+    def find_one(self, **kwargs):
+        for row in self.find(**kwargs):
+            return row
+
+    def __iter__(self):
+        return self.find()
+
+    def __repr__(self):
+        return '<Sheet(%r, %r, %r)>' % (self._ss, self.id, self.title)
+
+    def __unicode__(self):
+        return self.title
 
 
 class Spreadsheet(object):
@@ -89,6 +111,34 @@ class Spreadsheet(object):
         if not hasattr(self, '_res') or self._res is None:
             self._res = self.conn.docs_client.GetResourceById(self.id)
         return self._res
+
+    @property
+    def sheets(self):
+        return [Sheet(self, ws) for ws in self._worksheet_feed.entry]
+
+    @property
+    def default_sheet(self):
+        return self.get('od6')
+
+    def get(self, key, create_missing=True):
+        for sheet in self.sheets:
+            if key == sheet or sheet.id == key or sheet.title == key:
+                return sheet
+        if create_missing:
+            self.create_sheet(key)
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def create_sheet(self, title):
+        """ Create a sheet with the given title. This does not check if
+        another sheet by the same name already exists. """
+        ws = self.conn.sheets_service.AddWorksheet(title, 10, 10, self.id)
+        self._wsf = None
+        return Sheet(self, ws)
+
+    def __iter__(self):
+        return self.sheets
 
     @property
     def title(self):
@@ -140,10 +190,9 @@ class Spreadsheet(object):
         returned by document search. """
         conn = Connection.connect(conn=conn, google_user=google_user,
                                   google_password=google_password)
-        q = DocumentQuery(categories=['spreadsheet'],
-                          text_query=title)
-        feed = conn.docs_service.Query(q.ToUri())
+        q = DocsQuery(categories=['spreadsheet'], title=title)
+        feed = conn.docs_client.GetResources(q=q)
         for entry in feed.entry:
-            if title == entry.title.text:
-                id = entry.feedLink.href.rsplit('%3A', 1)[-1]
+            if entry.title.text == title:
+                id = entry.id.text.rsplit('%3A', 1)[-1]
                 return cls.by_id(id, conn=conn)
