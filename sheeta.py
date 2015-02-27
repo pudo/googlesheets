@@ -1,9 +1,17 @@
 import os
+import re
 from gdata.docs.data import Resource
 from gdata.docs.client import DocsClient, DocsQuery
-from gdata.spreadsheet.service import SpreadsheetsService
+# from gdata.spreadsheets.client import SpreadsheetsClient
+from gdata.spreadsheet.service import SpreadsheetsService, CellQuery
 
 SOURCE_NAME = 'Sheeta/Python'
+
+
+def normalize_header(name, existing=[]):
+    name = re.sub('\W+', '', name, flags=re.UNICODE).lower()
+    # TODO handle multiple columns with the same name.
+    return name
 
 
 class Connection(object):
@@ -59,10 +67,60 @@ class Sheet(object):
         self._ss = spreadsheet
         self._ws = ws
         self.id = ws.id.text.rsplit('/', 1)[-1]
+        self._headers = None
+
+    @property
+    def _service(self):
+        return self._ss.conn.sheets_service
+
+    def _add_column(self, label, field):
+        # Don't call this directly.
+        assert self.headers is not None
+        cols = max([int(c.cell.col) for c in self._headers])
+        new_col = cols + 1
+        if int(self._ws.col_count.text) < new_col:
+            self._ws.col_count.text = str(new_col)
+            self._update_metadata()
+
+        cell = self._service.UpdateCell(1, new_col, label,
+                                        self._ss.id, self.id)
+        print cell
+        self._headers.append(cell)
+
+    def _create_columns(self, columns):
+        columns = {normalize_header(c): c for c in columns}
+        # existing = set(self.headers)
+        for column in set(columns.keys()).difference(self.headers):
+            self._add_column(columns[column], column)
+        self._headers = None
+
+    @property
+    def headers(self):
+        if self._headers is None:
+            query = CellQuery()
+            query.max_row = '1'
+            feed = self._service.GetCellsFeed(self._ss.id, self.id,
+                                              query=query)
+            self._headers = feed.entry
+        return [normalize_header(h.cell.text) for h in self._headers]
+
+    def _update_metadata(self):
+        self._ws = self._service.UpdateWorksheet(self._ws)
+
+    def insert(self, row):
+        assert isinstance(row, dict) or hasattr(row, 'items')
+        self._create_columns(row.keys())
+        data = {normalize_header(k): unicode(v) for k, v in row.items()}
+        self._service.InsertRow(data, self._ss.id, self.id)
 
     @property
     def title(self):
         return self._ws.title.text
+
+    @title.setter
+    def title(self, title):
+        self._ws.title.text = unicode(title)
+        self._update_metadata()
 
     def delete(self):
         self._ss.conn.sheets_service.DeleteWorksheet(self._ws)
