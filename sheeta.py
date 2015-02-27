@@ -1,9 +1,11 @@
 import os
 import re
+import json
 from gdata.docs.data import Resource
 from gdata.docs.client import DocsClient, DocsQuery
 # from gdata.spreadsheets.client import SpreadsheetsClient
-from gdata.spreadsheet.service import SpreadsheetsService, CellQuery
+from gdata.spreadsheet.service import SpreadsheetsService
+from gdata.spreadsheet.service import CellQuery, ListQuery
 
 SOURCE_NAME = 'Sheeta/Python'
 
@@ -84,7 +86,6 @@ class Sheet(object):
 
         cell = self._service.UpdateCell(1, new_col, label,
                                         self._ss.id, self.id)
-        print cell
         self._headers.append(cell)
 
     def _create_columns(self, columns):
@@ -123,23 +124,43 @@ class Sheet(object):
         self._update_metadata()
 
     def delete(self):
+        """ Delete the entire sheet. """
         self._ss.conn.sheets_service.DeleteWorksheet(self._ws)
 
-    def find(self, **kwargs):
-        feed = self._ss.conn.sheets_service.GetListFeed(self._ss.id,
-                                                        wksht_id=self.id)
-        for entry in feed.entry:
+    def _find_entries(self, _query=None, **kwargs):
+        query = None
+        if _query is not None:
+            query = ListQuery()
+            query.sq = _query
+        elif len(kwargs.keys()):
+            text = []
+            for k, v in kwargs.items():
+                k = normalize_header(k)
+                v = json.dumps(unicode(v))
+                text.append("%s = %s" % (k, v))
+            query = ListQuery()
+            query.sq = ' and '.join(text)
+        feed = self._service.GetListFeed(self._ss.id, wksht_id=self.id,
+                                         query=query)
+        return feed.entry
+
+    def find(self, _query=None, **kwargs):
+        for entry in self._find_entries(**kwargs):
             row = {}
             for k, v in entry.custom.items():
                 row[k] = v.text
             yield row
 
-    def find_one(self, **kwargs):
+    def find_one(self, _query=None, **kwargs):
         for row in self.find(**kwargs):
             return row
 
     def __iter__(self):
         return self.find()
+
+    def __len__(self):
+        # This is not precise.
+        return int(self._ws.row_count.text)
 
     def __repr__(self):
         return '<Sheet(%r, %r, %r)>' % (self._ss, self.id, self.title)
