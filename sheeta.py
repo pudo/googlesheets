@@ -95,6 +95,14 @@ class Sheet(object):
             self._add_column(columns[column], column)
         self._headers = None
 
+    def _convert_value(self, row):
+        assert isinstance(row, dict) or hasattr(row, 'items')
+        self._create_columns(row.keys())
+        data = {}
+        for k, v in row.items():
+            data[normalize_header(k)] = unicode(v)
+        return data
+
     @property
     def headers(self):
         if self._headers is None:
@@ -109,13 +117,34 @@ class Sheet(object):
         self._ws = self._service.UpdateWorksheet(self._ws)
 
     def insert(self, row):
-        assert isinstance(row, dict) or hasattr(row, 'items')
-        self._create_columns(row.keys())
-        data = {normalize_header(k): unicode(v) for k, v in row.items()}
+        data = self._convert_value(row)
         self._service.InsertRow(data, self._ss.id, self.id)
+
+    def update(self, row, keys=[]):
+        changed = 0
+        data = self._convert_value(row)
+        keys = [normalize_header(k) for k in keys]
+        filters = {k: data.get(k) for k in keys}
+        for entry in self._find_entries(**filters):
+            row = self._entry_data(entry)
+            row.update(data)
+            self._service.UpdateRow(entry, row)
+            changed += 1
+        return changed
+
+    def upsert(self, row, keys=[]):
+        if self.update(row, keys=keys) == 0:
+            self.insert(row)
+
+    def remove(self, _query=None, **kwargs):
+        """ Remove all rows matching the current query. If no query
+        is given, this will truncate the entire table. """
+        for entry in self._find_entries(_query=_query, **kwargs):
+            self._service.DeleteRow(entry)
 
     @property
     def title(self):
+        """ The title of the sheet. """
         return self._ws.title.text
 
     @title.setter
@@ -144,12 +173,15 @@ class Sheet(object):
                                          query=query)
         return feed.entry
 
+    def _entry_data(self, entry):
+        row = {}
+        for k, v in entry.custom.items():
+            row[k] = v.text
+        return row
+
     def find(self, _query=None, **kwargs):
         for entry in self._find_entries(**kwargs):
-            row = {}
-            for k, v in entry.custom.items():
-                row[k] = v.text
-            yield row
+            yield self._entry_data(entry)
 
     def find_one(self, _query=None, **kwargs):
         for row in self.find(**kwargs):
