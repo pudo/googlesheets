@@ -1,5 +1,5 @@
 
-from sheeta import Spreadsheet
+from googlesheets import Spreadsheet
 
 ss = Spreadsheet.by_title('angaben_a14')
 print ss.sheets
